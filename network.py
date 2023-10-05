@@ -9,14 +9,14 @@ class CustomLayer(nn.Module):
     """
     Custom layer created to accomodate sparse connections
     """
-    def __init__(self, num_layer: int = 1, in_features: int = 400, 
-                 out_features: int = 133) -> None:
+    def __init__(self, num_layer: int = 1, in_features: int = 1060, 
+                 out_features: int = 149) -> None:
         super(CustomLayer, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
 
         self.layer = nn.Linear(in_features,out_features)
-        torch.nn.init.xavier_uniform_(self.layer.weight,gain=5.0)
+        torch.nn.init.xavier_uniform_(self.layer.weight,gain=15.0)
 
         self.num_layer = num_layer
         if self.num_layer == 1:
@@ -30,7 +30,7 @@ class CustomLayer(nn.Module):
 
     def forward(self, x):
 
-        # device = "cuda" if torch.cuda.is_available() else "cpu"
+        #device = "cpu"
         # self.layer.weight = nn.Parameter(self.layer.weight *  
         #                                  torch.Tensor(self.adj_matrix
         #                                               .to_numpy()).to(device))
@@ -48,12 +48,16 @@ class Network(nn.Module):
     """
     def __init__(self):
         super().__init__()
-
-        self.first_layer = CustomLayer(num_layer=1,in_features=400,out_features=133)
-        self.second_layer = CustomLayer(num_layer=2, in_features=133, out_features=1274)
-        self.all_layers = nn.Sequential(self.first_layer,nn.ReLU(),
-                                    self.second_layer,nn.ReLU(),
-                                    nn.Linear(1274,2))
+        self.bn = nn.BatchNorm1d(1060)
+        self.first_layer = CustomLayer(num_layer=1,in_features=1060,out_features=149)
+        self.bn1 = nn.BatchNorm1d(1)
+        self.second_layer = CustomLayer(num_layer=2, in_features=149, out_features=1283)
+        self.bn2 = nn.BatchNorm1d(1)
+        self.third_layer = nn.Linear(1283,2)
+        self.all_layers = nn.Sequential(self.first_layer,nn.Tanh(),
+                                    self.second_layer,nn.Tanh(),
+                                    self.third_layer)
+        
 
     def forward(self, gene,data=None):
         # self.first_layer.weigh
@@ -65,7 +69,10 @@ class Network(nn.Module):
     def init_weights(m):
         if isinstance(m, nn.Linear) or isinstance(m,nn.Conv3d):
             torch.nn.init.xavier_uniform_(m.weight)
-            #m.bias.data.fill_(0.01)
+            m.bias.data.fill_(0.01)
+    
+
+
 
 
 # %%

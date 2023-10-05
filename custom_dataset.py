@@ -33,14 +33,26 @@ class CustomDataset(Dataset):
         # column for sex; sex_f31_0_0 
         # column for Numeric memory: 'maximum_digits_remembered_correctly_f4282_2_0'
         """
+
+        self.train = train
+        self.valid = valid
+
         self.vars = pd.read_csv(label_file,index_col='eid',
                             usecols=['eid','maximum_digits_remembered_correctly_f4282_2_0',
                             'sex_f31_0_0','age_when_attended_assessment_centre_f21003_0_0'])
         self.vars.columns = ['sex','score','age']
+
         self.gene_dataset = pd.read_csv('gene_working_mem_dataset.csv',index_col='FID')
         self.gene_dataset = self.gene_dataset.fillna(0)
 
-        self.vars = self.vars.loc[self.gene_dataset.index.tolist()]
+        #self.pca_smri = pd.read_csv('PCA_transformed_smri.csv',index_col='dirs')
+        self.img_vars = self.vars
+        #ids with no images
+        self.vars = self.vars.drop([1171080,1660210,2012720,2378544,2835040,2951207,4312676],axis=0)
+        self.gene_dataset = self.gene_dataset.drop([1171080,1660210,2012720,2378544,2835040,2951207,4312676],axis=0)
+        
+        #selecting only subjects with genes
+        #self.pca_smri = self.pcs_smri.loc[self.gene_dataset.index.tolist()]
         #self.vars['score'] = self.vars['score'] + 1 
         
         # Applying log transform
@@ -49,13 +61,16 @@ class CustomDataset(Dataset):
         #self.vars['score'] = SimpleImputer(strategy='mean',
         #                       missing_values=np.nan).fit_transform(self.vars)
         
+        self.vars = self.vars.loc[self.gene_dataset.index.tolist()]
         # removing missing scores 
         self.vars = self.vars.loc[
                         self.vars.score.isin([2,3,4,5,9,10,11,12])]
+        self.img_vars = self.img_vars.loc[
+                        self.img_vars.score.isin([2,3,4,5,9,10,11,12])]
 
         #######
         self.vars['new_score'] = [0 if a < 6 else 1 for a in self.vars['score']]
-
+        self.img_vars['new_score'] = [0 if a < 6 else 1 for a in self.img_vars['score']]
         # We want sampling only during the training and validation and not for
         # testing the fixed model
         
@@ -74,22 +89,31 @@ class CustomDataset(Dataset):
         # Removing the images with no pixels
         #self.vars = self.vars.drop([1171080,1660210,2012720,2378544,2835040,2951207,4312676],axis=0)
         
-        self.vars['pos'] = list(range(5002))
 
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=random_state)
-        self.train_idx, self.test_idx = next(sss.split(np.zeros_like(self.vars),
-            self.vars.new_score.values))
+        train_idx, test_idx = next(sss.split(np.zeros_like(self.img_vars),
+            self.img_vars.new_score.values))
+        img_train = self.img_vars.iloc[train_idx]
+        img_test = self.img_vars.iloc[test_idx]
+        train_vars = self.vars.loc[list(set(img_train.index.tolist()).intersection(self.vars.index.tolist()))]
+        self.train_idx = list(range(4494))
+        self.test_idx = list(range(4494,4995))
+        test_vars = self.vars.loc[list(set(img_test.index.tolist()).intersection(self.vars.index.tolist()))]
+        self.vars = pd.concat([train_vars,test_vars])
+        self.gene_dataset = self.gene_dataset.loc[self.vars.index.tolist()]
+        self.dirs = self.vars.index.tolist()
+
         if train or valid:
             self.vars = self.vars.iloc[self.train_idx]
             self.gene_dataset = self.gene_dataset.iloc[self.train_idx]
         else:
-            test_vars = self.vars.iloc[self.test_idx]
-            self.female_idx = test_vars[test_vars.sex == 0].pos.tolist()
-            self.male_idx = test_vars[test_vars.sex==1].pos.tolist()
-        self.dirs = self.vars.index
+            self.test_vars = self.vars.iloc[self.test_idx]
+            self.test_gene_dataset = self.gene_dataset.iloc[self.test_idx]
+            # self.female_idx = self.test_vars[self.test_vars.sex == 0].pos.tolist()
+            # self.male_idx = self.test_vars[self.test_vars.sex==1].pos.tolist()
 
-        self.vars = self.vars.sort_index()
-        self.gene_dataset = self.gene_dataset.sort_index()
+
+
         self.transform = transform
         self.target_transform = target_transform
         self.train = train
@@ -102,6 +126,7 @@ class CustomDataset(Dataset):
         
         label = self.vars.iloc[idx]
         gene = self.gene_dataset.iloc[idx].to_numpy()
+
 
 
         #offset by 4 because of scores range from 4 to 9

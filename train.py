@@ -15,27 +15,31 @@ from custom_dataset import CustomDataset
 from network import Network
 
 from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.metrics import balanced_accuracy_score
 from torch.utils.tensorboard import SummaryWriter
 from utils import *
+import sys
 
+writer = None
 #%%
 
 parser = argparse.ArgumentParser()
 parser.add_argument('job_id',type=str)
 args = parser.parse_args()
+print(args)
 print(args.job_id)
 print('number of gpus ',torch.cuda.device_count())
 
 #creating directory
 
 directory = args.job_id
-parent_directory = '/data/users2/pnadigapusuresh1/JobOutputs'
+parent_directory = '/data/users2/pnadigapusuresh1/JobOutputs/Genetics'
 path = os.path.join(parent_directory,directory)
 model_save_path = os.path.join(path,'models')
 
 if not os.path.exists(path):
-    os.mkdir(path)
-    os.mkdir(model_save_path)
+    os.makedirs(path)
+    os.makedirs(model_save_path)
 
 writer = SummaryWriter(log_dir=path)
 
@@ -54,7 +58,7 @@ np.random.seed(52)
 # number of subprocesses to use for data loading
 num_workers = 1
 # how many samples per batch to load
-batch_size = 50
+batch_size = 3500
 
 test_data = CustomDataset(train=False,valid=False)
 
@@ -69,7 +73,7 @@ test_loader = DataLoader(test_data,batch_size=batch_size,
 # %%
 
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cpu"
 print("Using {} device".format(device))
 
 model = Network()
@@ -79,17 +83,16 @@ print(model)
 
 #%%
 
-epochs = 50
+epochs = 300
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(params=model.parameters(), lr=1e-5)
+optimizer = optim.Adam(params=model.parameters(), lr=1e-5)
+
+
 
 #%%
 
-if torch.cuda.device_count() > 1:
-    model = nn.DataParallel(model)
 
 model = model.to(device)
-
 
 
 # %%
@@ -105,31 +108,52 @@ for e in range(1,epochs+1):
     actual_valid = torch.tensor([]).to(device)
     pred_train = torch.tensor([]).to(device)
     pred_valid = torch.tensor([]).to(device)
+    pred_actual = torch.tensor([]).to(device)
 
-    for X,y,_ in train_loader:
-
+    for batch,(X,y,_) in enumerate(train_loader):
+        #print(batch)
         X,y = X.float().to(device),y.to(device)
 
         actual_train = torch.cat((actual_train,y),0)
 
-        pred = model(X)
+        pred = torch.squeeze(model(torch.unsqueeze(X,1).float()))
+        soft_max = F.softmax(pred,dim=1)
+        pred_train = torch.cat((pred_train,torch.max(soft_max, dim=1)[1]),0)
 
-        pred_train = torch.cat((pred_train,torch.max(F.softmax(pred,dim=1), dim=1)[1]),0)
+        try:
+            loss = criterion(pred,y)
+            #print(loss)
+            if torch.isnan(loss):
+                        print(loss)
+                        raise Exception()
+            
+
+        except:
+            print(pred)
+            print(X)
+            sys.exit(0)
+
+        # layer0_params = torch.cat([x.view(-1) for x in model.all_layers[0].layer.parameters()])
+        # layer2_params = torch.cat([x.view(-1) for x in model.all_layers[2].layer.parameters()])
+        # l1_regularization = (torch.norm(layer0_params, 1) 
+        #                     + torch.norm(layer2_params,1))
+                                
+        #print('loss =',loss.item())
+        #loss += l1_regularization/(len(layer0_params)+len(layer2_params))
         
-        loss = criterion(pred,y)
 
-        if torch.isnan(loss):
-            break
 
         # Backpropagation
-        loss.backward()
-        optimizer.step()
         optimizer.zero_grad()
+        loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), 0.05)
+        optimizer.step()
         
-        #print('loss =',loss.item())
+        
+        #print('l1 reg = ',l1_regularization)
 
         train_loss += loss.item()
-        correct = torch.eq(torch.max(F.softmax(pred,dim=1), dim=1)[1],y).view(-1)
+        correct = torch.eq(torch.max(soft_max, dim=1)[1],y).view(-1)
         num_correct_train += torch.sum(correct).item()
     else:
         model.eval()
@@ -143,16 +167,18 @@ for e in range(1,epochs+1):
 
                 actual_valid = torch.cat((actual_valid,y),0)
 
-                pred = model(X)
+                pred = torch.squeeze(model(torch.unsqueeze(X,1).float()))
                 try:
                     loss = criterion(pred,y)
+                    
                 except:
                     print(pred)
                     print(y)
 
                 valid_loss += loss.item()
-                correct = torch.eq(torch.max(F.softmax(pred,dim=1), dim=1)[1],y).view(-1)
-                pred_valid = torch.cat((pred_valid,torch.max(F.softmax(pred,dim=1), dim=1)[1]),0)
+                soft_max = F.softmax(pred,dim=1)
+                correct = torch.eq(torch.max(soft_max, dim=1)[1],y).view(-1)
+                pred_valid = torch.cat((pred_valid,torch.max(soft_max, dim=1)[1]),0)
                 num_correct_valid += torch.sum(correct).item()
 
         # values = {
@@ -179,31 +205,49 @@ for e in range(1,epochs+1):
         # writer.add_figure('Train - True vs pred', plt.gcf(),e,True)
         
 
-        # plt.figure()
+        #plt.figure()
         # plt.plot(actual_valid.detach().cpu().numpy(),pred_valid.detach().cpu()
         #         .numpy(),'.')
         # plt.title('Validation - True vs pred')
         # plt.xlabel('True score')
         # plt.ylabel('Predicted score')
         
+        
         # writer.add_figure('Validation - True vs pred', plt.gcf(),e,True)
+        w1,b1 = model.all_layers[0].layer.parameters()
+        w2,b2 = model.all_layers[3].layer.parameters()
 
-        # mcc_t,f1_t,b_a_t = write_confusion_matrix(writer, actual_train.detach().cpu().numpy(),
-        #     pred_train.detach().cpu().numpy(), e,'Confusion Matrix - Train' )
-        # mcc_v,f1_v,b_a_v = write_confusion_matrix(writer,actual_valid.detach().cpu().numpy(),
-        #     pred_valid.detach().cpu().numpy(), e,'Confusion Matrix - Validation')
+        if writer:
+            mcc_t,f1_t,b_a_t,sensitivity_t,specificity_t = write_confusion_matrix(writer, actual_train.detach().cpu().numpy(),
+                pred_train.detach().cpu().numpy(), e,'Confusion Matrix - Train' )
+            mcc_v,f1_v,b_a_v, _, _ = write_confusion_matrix(writer,actual_valid.detach().cpu().numpy(),
+                pred_valid.detach().cpu().numpy(), e,'Confusion Matrix - Validation')
 
+            plt.figure()
+            plt.hist(w1.detach().cpu().view(-1))
+            writer.add_figure('W1 distribution',plt.gcf(),e,True)
+        
+        b_a_t = balanced_accuracy_score(actual_train.detach().cpu().numpy(),
+                        pred_train.detach().cpu().numpy())
+        b_a_v = balanced_accuracy_score(actual_valid.detach().cpu().numpy(),
+                        pred_valid.detach().cpu().numpy())
         print("Epoch: {}/{}.. ".format(e, epochs),
             #   "Training Loss: {:.3f}.. ".format(train_loss/len(train_loader)),
             #   "Validation Loss: {:.3f}.. ".format(valid_loss/len(valid_loader)),
               'Train Accuracy: {:.3f}..'.format(num_correct_train/len(test_data.train_idx)),
               "test Accuracy: {:.3f}..".format(num_correct_valid/len(test_data.test_idx)),
+              f'train_bal: {b_a_t:.3f}',
+              f'test_bal: {b_a_v:.3f}',
             #   f'mcc_t: {mcc_t:.3f}..',
             #   f'mcc_v: {mcc_v:.3f}..',
             #   f'f1_t: {f1_t:.3f}..',
             #   f'f1_v: {f1_v:.3f}..',
             f'loss: {train_loss:.4f}'
             )
+
+        if b_a_t - b_a_v > 0.1:
+            print(f'Bye')
+            exit() 
               
         #writer.add_scalar('Train r2', r2_score(pred_train,actual_train),e)
         #writer.add_scalar('Valid r2', r2_score(pred_valid,actual_valid),e)
