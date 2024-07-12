@@ -14,7 +14,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 class CustomDataset(Dataset):
     
     def __init__(self,img_path= '/data/qneuromark/Data/UKBiobank/Data_BIDS/Raw_Data'
-                    , label_file= '/data/users2/pnadigapusuresh1/Projects/ukbiobank/Data/subset_vars.csv',transform=None
+                    , label_file= '/data/users3/pnadigapusuresh1/Projects/ukbiobank/Data/subset_vars.csv',transform=None
                     , target_transform=None,train=True,valid=False,random_state=52):
         self.img_path = img_path
         # self.dirs = os.listdir(img_path)
@@ -43,7 +43,7 @@ class CustomDataset(Dataset):
         self.vars.columns = ['sex','score','age']
 
         self.gene_dataset = pd.read_csv('gene_working_mem_dataset.csv',index_col='FID')
-        self.gene_dataset = self.gene_dataset.fillna(0)
+        self.gene_dataset = self.gene_dataset.fillna(1)
 
         #self.pca_smri = pd.read_csv('PCA_transformed_smri.csv',index_col='dirs')
         self.img_vars = self.vars
@@ -93,16 +93,15 @@ class CustomDataset(Dataset):
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=random_state)
         train_idx, test_idx = next(sss.split(np.zeros_like(self.img_vars),
             self.img_vars.new_score.values))
-        img_train = self.img_vars.iloc[train_idx]
-        img_test = self.img_vars.iloc[test_idx]
-        train_vars = self.vars.loc[list(set(img_train.index.tolist()).intersection(self.vars.index.tolist()))]
-        self.train_idx = list(range(4494))
-        self.test_idx = list(range(4494,4995))
-        test_vars = self.vars.loc[list(set(img_test.index.tolist()).intersection(self.vars.index.tolist()))]
-        self.vars = pd.concat([train_vars,test_vars])
+        self.img_train = self.img_vars.iloc[train_idx]
+        self.img_test = self.img_vars.iloc[test_idx]
+        self.__train_vars__ = self.vars.loc[list(set(self.img_train.index.tolist()).intersection(self.vars.index.tolist()))]
+        self.train_idx = list(range(4490))
+        self.test_idx = list(range(4490,4995))
+        self.__test_vars__ = self.vars.loc[list(set(self.img_test.index.tolist()).intersection(self.vars.index.tolist()))]
+        self.vars = pd.concat([self.__train_vars__,self.__test_vars__])
         self.gene_dataset = self.gene_dataset.loc[self.vars.index.tolist()]
         self.dirs = self.vars.index.tolist()
-
         if train or valid:
             self.vars = self.vars.iloc[self.train_idx]
             self.gene_dataset = self.gene_dataset.iloc[self.train_idx]
@@ -118,6 +117,8 @@ class CustomDataset(Dataset):
         self.target_transform = target_transform
         self.train = train
 
+        self.vars['pos'] = self.dirs
+
     
     def __len__(self):
         return len(self.dirs)
@@ -130,7 +131,7 @@ class CustomDataset(Dataset):
 
 
         #offset by 4 because of scores range from 4 to 9
-        return torch.tensor(gene),int(label['new_score']),label['age']
+        return torch.tensor(gene),int(label['new_score']),label['age'],label['pos']
 # %%
 
 

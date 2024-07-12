@@ -19,7 +19,7 @@ class CustomLayer(nn.Module):
         torch.nn.init.xavier_uniform_(self.layer.weight,gain=15.0)
 
         self.num_layer = num_layer
-        if self.num_layer == 1:
+        if self.num_layer ==  1:
             self.adj_matrix = pd.read_csv('adj_matrix_first_second.csv',
                                           index_col = 'SNP_id').T
         else:

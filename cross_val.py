@@ -12,11 +12,11 @@ from torch.utils.data.sampler import SubsetRandomSampler
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import MultiStepLR
 
-from custom_dataset import CustomDataset
-from network import Network
+from custom_dataset_embed import CustomDataset
+from network_embed import Network
 from utils import *
 
-from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit,GroupShuffleSplit
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import roc_auc_score
 
@@ -33,7 +33,7 @@ print('number of gpus ',torch.cuda.device_count())
 #creating directory
 
 directory = args.job_id
-parent_directory = '/data/users2/pnadigapusuresh1/JobOutputs/Genetics'
+parent_directory = '/data/users3/pnadigapusuresh1/JobOutputs/Genetics'
 path = os.path.join(parent_directory,directory)
 model_save_path = os.path.join(path,'models_fold')
 
@@ -42,15 +42,17 @@ if not os.path.exists(path):
     os.makedirs(model_save_path)
 
 #%%
-lambda0 = np.flip(np.linspace(1e-3,1e-7,30))
-lambda1 = np.flip(np.linspace(1e-3,1e-7,30))
-lr = np.linspace(1e-2,1e-7,30)
+lambda0 = np.flip(np.linspace(1e-2,1e-3,30))
+lambda1 = np.flip(np.linspace(1e-2,1e-3,30))
+lr = np.linspace(1e-4,1e-7,50)
 
 combinations = [[x0, y0, l] for x0 in lambda0 for y0 in lambda1 for l in lr]
 
-lr = lr[args.array_id - 1]
+lambda0,lambda1,lr = combinations[args.array_id - 1]
 
-print(f'lr = {lr}')
+print(f'lr = {lr}, lambda0={lambda0}, lambda1={lambda1}')
+
+#lr = lr[args.array_id - 1]
 
 count_09 = 0
 #%%
@@ -65,13 +67,13 @@ torch.manual_seed(52)
 # number of subprocesses to use for data loading
 num_workers = 4
 # how many samples per batch to load
-batch_size = 1000
+batch_size = 500
 # if torch.cuda.device_count() > 1:
 #     batch_size *= torch.cuda.device_count()
 # else:
 #     batch_size = 5
 # percentage of training set to use as validation
-valid_size = 0.30
+valid_size = 0.20
 # percentage of data to be used for testset
 test_size = 0.10
 
@@ -85,15 +87,15 @@ vars = data.vars.iloc[data.train_idx]
 
 # Prepare for k-fold
 
-sss = StratifiedShuffleSplit(n_splits=1,test_size=valid_size,random_state=52)
+sss = StratifiedShuffleSplit(n_splits=5,test_size=valid_size,random_state=52)
 fold = 1
 
 for train_idx, valid_idx in sss.split(np.zeros_like(vars),vars.new_score.values):
     writer = SummaryWriter(log_dir=path+'/fold'+str(fold))
 
     train_sampler = SubsetRandomSampler(train_idx)
-    valid_sampler = SubsetRandomSampler(valid_idx)
-    test_sampler = SubsetRandomSampler(data.test_idx)
+    valid_sampler = SubsetRandomSampler(train_idx[500:])
+    test_sampler = SubsetRandomSampler(train_idx[2000:])
 
     train_loader = DataLoader(data,batch_size=batch_size, 
                                 sampler= train_sampler, num_workers=num_workers)
@@ -102,7 +104,7 @@ for train_idx, valid_idx in sss.split(np.zeros_like(vars),vars.new_score.values)
     test_loader = DataLoader(data,batch_size=batch_size,
                                 sampler= test_sampler, num_workers=num_workers)
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'
     print("Using {} device".format(device))
 
     model = Network()
@@ -111,9 +113,9 @@ for train_idx, valid_idx in sss.split(np.zeros_like(vars),vars.new_score.values)
 
     #%%
 
-    epochs = 500
+    epochs = 50
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(params=model.parameters(), lr=lr)
+    optimizer = optim.AdamW(params=model.parameters(), lr=lr)
     scheduler = MultiStepLR(optimizer, milestones=[100,200,300], gamma=0.1)
     #%%
 
@@ -150,8 +152,7 @@ for train_idx, valid_idx in sss.split(np.zeros_like(vars),vars.new_score.values)
                 loss = criterion(pred,y)
                 #print(loss)
                 if torch.isnan(loss):
-                            print(loss)
-                            raise Exception()
+                    raise Exception()
                 
 
             except:
@@ -160,13 +161,12 @@ for train_idx, valid_idx in sss.split(np.zeros_like(vars),vars.new_score.values)
                 print(X)
                 exit(0)
 
-            layer0_params = torch.cat([x.view(-1) for x in model.all_layers[0].layer.parameters()])
-            layer2_params = torch.cat([x.view(-1) for x in model.all_layers[2].layer.parameters()])
-            l1_regularization = (lambda0 * torch.norm(layer0_params, 1).item()
-                                + lambda1* torch.norm(layer2_params,1).item())
+            # layer0_params = torch.cat([x.view(-1) for x in model.all_layers[0].layer.parameters()])
+            # layer2_params = torch.cat([x.view(-1) for x in model.all_layers[2].layer.parameters()])
+            # l1_regularization = (lambda0 * torch.norm(layer0_params, 2)
+            #                     + lambda1* torch.norm(layer2_params,2))
                                     
-            #print('loss =',loss.item())
-            loss += l1_regularization + l1_regularization
+            # loss += l1_regularization 
             
 
 
@@ -245,9 +245,9 @@ for train_idx, valid_idx in sss.split(np.zeros_like(vars),vars.new_score.values)
         # auc_test = roc_auc_score(actual_test.detach().cpu().numpy(),pred_proba_test.detach().cpu().numpy())  
         
         print("Epoch: {}/{}.. ".format(e, epochs),
-            "Training Accuracy: {:.3f}.. ".format(num_correct_train/len(train_idx)),
-            "Validation Accuracy: {:.3f}.. ".format(num_correct_valid/len(valid_idx)),
-            "Test Accuracy: {:.3f}.. ".format(num_correct_test/len(data.test_idx)),
+            # "Training Accuracy: {:.3f}.. ".format(num_correct_train/len(train_loader)),
+            # "Validation Accuracy: {:.3f}.. ".format(num_correct_valid/len(valid_loader)),
+            # "Test Accuracy: {:.3f}.. ".format(num_correct_test/len(test_loader)),
             "Train Bal acc: {:.4f}.. ".format(b_a_t),
             "Val Bal acc: {:.4f}.. ".format(b_a_v),
             "Test Bal acc: {:.4f}.. ".format(b_a_test),
@@ -258,8 +258,8 @@ for train_idx, valid_idx in sss.split(np.zeros_like(vars),vars.new_score.values)
         # writer.add_scalar('Valid r2', r2_score(pred_valid,actual_valid),e)
         writer.add_scalar('Train Loss', train_loss/len(train_loader),e)
         writer.add_scalar('Validation Loss', valid_loss/len(valid_loader),e)
-        writer.add_scalar('Train Accuracy',num_correct_train/len(train_idx),e)
-        writer.add_scalar('validation Accuracy', num_correct_valid/len(valid_idx),e)
+        writer.add_scalar('Train Accuracy',num_correct_train/len(test_loader),e)
+        writer.add_scalar('validation Accuracy', num_correct_valid/len(valid_loader),e)
         
         # w1,b1 = model.all_layers[0].layer.parameters()
         # w2,b2 = model.all_layers[2].layer.parameters()
@@ -276,14 +276,19 @@ for train_idx, valid_idx in sss.split(np.zeros_like(vars),vars.new_score.values)
         #     torch.save(model.state_dict(), os.path.join(fold_path,
         #         'epoch_'+str(e)))
 
-        if b_a_t > 0.9:
+        if abs(b_a_t - b_a_v) < 0.1:
             count_09 += 1
+            fold_path = os.path.join(model_save_path,str(fold))
 
-            if count_09 == 20:
-                print('Bye')
-                exit(0)
-        
-        scheduler.step()
+            if not os.path.exists(fold_path):
+                os.makedirs(fold_path)
+            torch.save(model.state_dict(), os.path.join(fold_path,
+                'epoch_'+str(e)))
+           
+        if train_loss > 500:
+            break
+
+        optimizer.step()
 
     fold+=1
     print('####################################################################')

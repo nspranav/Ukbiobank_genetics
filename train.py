@@ -11,7 +11,7 @@ from torchvision import transforms
 from torch.utils.data.sampler import SubsetRandomSampler
 import torch.nn.functional as F
 
-from custom_dataset import CustomDataset
+from custom_dataset_embed import CustomDataset
 from network import Network
 
 from sklearn.model_selection import StratifiedShuffleSplit
@@ -33,7 +33,7 @@ print('number of gpus ',torch.cuda.device_count())
 #creating directory
 
 directory = args.job_id
-parent_directory = '/data/users2/pnadigapusuresh1/JobOutputs/Genetics'
+parent_directory = '/data/users3/pnadigapusuresh1/JobOutputs/Genetics'
 path = os.path.join(parent_directory,directory)
 model_save_path = os.path.join(path,'models')
 
@@ -58,7 +58,7 @@ np.random.seed(52)
 # number of subprocesses to use for data loading
 num_workers = 1
 # how many samples per batch to load
-batch_size = 3500
+batch_size = 1
 
 test_data = CustomDataset(train=False,valid=False)
 
@@ -79,7 +79,9 @@ print("Using {} device".format(device))
 model = Network()
 
 print(model)
-
+parent_directory = '/data/users3/pnadigapusuresh1/JobOutputs/Genetics'
+load_path = os.path.join(parent_directory,'3805406','models_fold','1','epoch_11')
+model.load_state_dict(torch.load(load_path,map_location=torch.device('cpu')))
 
 #%%
 
@@ -111,12 +113,12 @@ for e in range(1,epochs+1):
     pred_actual = torch.tensor([]).to(device)
 
     for batch,(X,y,_) in enumerate(train_loader):
-        #print(batch)
+        print(batch)
         X,y = X.float().to(device),y.to(device)
 
         actual_train = torch.cat((actual_train,y),0)
 
-        pred = torch.squeeze(model(torch.unsqueeze(X,1).float()))
+        pred = model(X.float())
         soft_max = F.softmax(pred,dim=1)
         pred_train = torch.cat((pred_train,torch.max(soft_max, dim=1)[1]),0)
 
@@ -124,8 +126,8 @@ for e in range(1,epochs+1):
             loss = criterion(pred,y)
             #print(loss)
             if torch.isnan(loss):
-                        print(loss)
-                        raise Exception()
+                print(loss)
+                raise Exception()
             
 
         except:
@@ -167,7 +169,7 @@ for e in range(1,epochs+1):
 
                 actual_valid = torch.cat((actual_valid,y),0)
 
-                pred = torch.squeeze(model(torch.unsqueeze(X,1).float()))
+                pred = model(X.float())
                 try:
                     loss = criterion(pred,y)
                     
@@ -214,18 +216,18 @@ for e in range(1,epochs+1):
         
         
         # writer.add_figure('Validation - True vs pred', plt.gcf(),e,True)
-        w1,b1 = model.all_layers[0].layer.parameters()
-        w2,b2 = model.all_layers[3].layer.parameters()
+        # w1,b1 = model.all_layers[0].layer.parameters()
+        # w2,b2 = model.all_layers[2].layer.parameters()
 
-        if writer:
-            mcc_t,f1_t,b_a_t,sensitivity_t,specificity_t = write_confusion_matrix(writer, actual_train.detach().cpu().numpy(),
-                pred_train.detach().cpu().numpy(), e,'Confusion Matrix - Train' )
-            mcc_v,f1_v,b_a_v, _, _ = write_confusion_matrix(writer,actual_valid.detach().cpu().numpy(),
-                pred_valid.detach().cpu().numpy(), e,'Confusion Matrix - Validation')
+        # if writer:
+        #     mcc_t,f1_t,b_a_t,sensitivity_t,specificity_t = write_confusion_matrix(writer, actual_train.detach().cpu().numpy(),
+        #         pred_train.detach().cpu().numpy(), e,'Confusion Matrix - Train' )
+        #     mcc_v,f1_v,b_a_v, _, _ = write_confusion_matrix(writer,actual_valid.detach().cpu().numpy(),
+        #         pred_valid.detach().cpu().numpy(), e,'Confusion Matrix - Validation')
 
-            plt.figure()
-            plt.hist(w1.detach().cpu().view(-1))
-            writer.add_figure('W1 distribution',plt.gcf(),e,True)
+        #     plt.figure()
+        #     plt.hist(w1.detach().cpu().view(-1))
+        #     writer.add_figure('W1 distribution',plt.gcf(),e,True)
         
         b_a_t = balanced_accuracy_score(actual_train.detach().cpu().numpy(),
                         pred_train.detach().cpu().numpy())
@@ -255,9 +257,9 @@ for e in range(1,epochs+1):
         #writer.add_scalar('Validation Loss', valid_loss/len(valid_loader),e)
         # writer.add_scalar('Train Accuracy',num_correct_train/len(test_data.train_idx),e)
         # writer.add_scalar('Test Accuracy', num_correct_valid/len(test_data.test_idx),e)
-        # if abs(valid_loss/len(test_loader) - train_loss/len(train_loader)) < 0.2:
-        #    torch.save(model.state_dict(), os.path.join(model_save_path,
-        #         'epoch_'+str(e)))
+        if abs(valid_loss/len(test_loader) - train_loss/len(train_loader)) < 0.2:
+           torch.save(model.state_dict(), os.path.join(model_save_path,
+                'epoch_'+str(e)))
 # %%
 writer.flush()
 writer.close()
